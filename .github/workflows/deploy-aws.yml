@@ -1,0 +1,75 @@
+# Builds the images, pushes them to Amazon ECR and deploys them to your EC2 server.
+# NOT ACTIVE until you create the AWS resources and add the secrets listed in docs/AWS_DEPLOY.md.
+# It only runs when you start it by hand (Actions tab > "Deploy to AWS" > Run workflow).
+name: Deploy to AWS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the required secrets exist
+        run: |
+          missing=0
+          for v in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION EC2_HOST EC2_USER EC2_SSH_KEY; do
+            if [ -z "$(printenv "S_$v")" ]; then echo "Missing secret: $v"; missing=1; fi
+          done
+          exit $missing
+        env:
+          S_AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          S_AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          S_AWS_REGION: ${{ secrets.AWS_REGION }}
+          S_EC2_HOST: ${{ secrets.EC2_HOST }}
+          S_EC2_USER: ${{ secrets.EC2_USER }}
+          S_EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: Sign in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push the images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          PREFIX="$REGISTRY/factoryguard"
+          TAG="${GITHUB_SHA::7}"
+          echo "REGISTRY=$REGISTRY" >> "$GITHUB_ENV"
+          echo "PREFIX=$PREFIX" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          docker build -t "$PREFIX/guard:$TAG" ./guard
+          docker build -t "$PREFIX/simulator:$TAG" ./simulator
+          docker build -t "$PREFIX/demo-app:v1.0" --build-arg APP_VERSION=v1.0 --build-arg BUG_MODE=false ./demo-app
+          docker build -t "$PREFIX/demo-app:v1.1" --build-arg APP_VERSION=v1.1 --build-arg BUG_MODE=true ./demo-app
+          for img in "guard:$TAG" "simulator:$TAG" "demo-app:v1.0" "demo-app:v1.1"; do docker push "$PREFIX/$img"; done
+
+      - name: Deploy to the EC2 server
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+          USER_NAME: ${{ secrets.EC2_USER }}
+          REGION: ${{ secrets.AWS_REGION }}
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          install -m 600 /dev/null key.pem
+          echo "$SSH_KEY" > key.pem
+          SSH="ssh -i key.pem -o StrictHostKeyChecking=accept-new $USER_NAME@$HOST"
+          SCP="scp -i key.pem -o StrictHostKeyChecking=accept-new"
+          $SSH "mkdir -p ~/factoryguard/mosquitto"
+          $SCP docker-compose.yml docker-compose.aws.yml "$USER_NAME@$HOST:~/factoryguard/"
+          $SCP mosquitto/mosquitto.conf "$USER_NAME@$HOST:~/factoryguard/mosquitto/"
+          # keep the server's existing .env (for example your database password); only refresh the cloud settings
+          $SSH "cd ~/factoryguard && touch .env && sed -i '/^REGISTRY_PREFIX=/d;/^TAG=/d;/^GUARD_IMAGE_NAME=/d;/^AWS_REGION=/d;/^GUARD_BIND=/d' .env && printf 'REGISTRY_PREFIX=$PREFIX\nTAG=$TAG\nGUARD_IMAGE_NAME=$PREFIX/demo-app\nAWS_REGION=$REGION\nGUARD_BIND=0.0.0.0\n' >> .env"
+          # the server's IAM role gives it permission to pull from ECR
+          $SSH "aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY"
+          $SSH "cd ~/factoryguard && docker pull $PREFIX/demo-app:v1.0 && docker pull $PREFIX/demo-app:v1.1 && docker compose -f docker-compose.yml -f docker-compose.aws.yml pull guard simulator && docker compose -f docker-compose.yml -f docker-compose.aws.yml up -d --no-build"
+          rm -f key.pem

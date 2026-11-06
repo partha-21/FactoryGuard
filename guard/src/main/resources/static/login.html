@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in - FactoryGuard</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="auth">
+  <aside class="auth-brand">
+    <div class="wordmark">Factory<b>Guard</b></div>
+    <div>
+      <h2>When a release goes bad, we notice and roll it back.</h2>
+      <p>FactoryGuard watches a factory monitoring app after every deployment. If sensor data stops flowing, it records the incident and restores the last version that worked.</p>
+      <ol>
+        <li><b>Create an account.</b> Everything starts at zero.</li>
+        <li><b>Start monitoring.</b> A healthy v1.0 is deployed from scratch.</li>
+        <li><b>Deploy v1.1.</b> Watch the rollback happen by itself.</li>
+      </ol>
+    </div>
+    <div class="foot">Visionet Techthon 2026 &middot; Team Cloud Pilot &middot; simulated factory data only</div>
+  </aside>
+
+  <main class="auth-form">
+    <div class="auth-box">
+      <div class="tabs">
+        <button id="tab-login" class="on" type="button">Sign in</button>
+        <button id="tab-register" type="button">Create account</button>
+      </div>
+
+      <div id="f-username-wrap">
+        <label for="username">Username</label>
+        <input id="username" type="text" autocomplete="username" maxlength="30">
+      </div>
+      <div id="f-email-wrap" hidden>
+        <label for="email">Email</label>
+        <input id="email" type="email" autocomplete="email" maxlength="120">
+      </div>
+      <div>
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" maxlength="72">
+        <div class="hint" id="pw-hint" hidden>At least 8 characters.</div>
+      </div>
+      <div id="f-confirm-wrap" hidden>
+        <label for="confirm">Confirm password</label>
+        <input id="confirm" type="password" autocomplete="new-password" maxlength="72">
+      </div>
+
+      <div class="err" id="err" role="alert"></div>
+      <button class="btn primary" id="submit" type="button">Sign in</button>
+    </div>
+  </main>
+</div>
+<script src="/login.js"></script>
+</body>
+</html>

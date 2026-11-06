@@ -1,0 +1,228 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  FactoryGuard on AWS. Creates one EC2 server with Docker, three ECR image repositories,
+  a CloudWatch log group, CloudWatch alarms with email alerts, and the firewall rules the server needs.
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 key pair (used to SSH into the server).
+  AllowedCidr:
+    Type: String
+    Description: Your own public IP address followed by /32 (for example 203.0.113.25/32). Only this address can reach SSH and the dashboard.
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$'
+    ConstraintDescription: Must look like 203.0.113.25/32
+  InstanceType:
+    Type: String
+    Default: t3.small
+    Description: Server size. At least 2 GB of memory is recommended (t3.small or larger). Check which sizes your AWS plan allows.
+  ExistingInstanceProfileName:
+    Type: String
+    Default: ""
+    Description: >
+      Leave empty on a normal account (a role is created for you). Student or lab accounts that cannot create
+      IAM roles: enter the name of the instance profile you are given (in AWS Academy Learner Lab it is LabInstanceProfile).
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: Optional. Email address for CloudWatch alarm alerts. You must confirm the subscription email AWS sends.
+  ThroughputThreshold:
+    Type: Number
+    Default: 60
+    Description: Alarm if sensor throughput stays below this many events per minute (keep equal to GUARD_THRESHOLD).
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
+    Description: Ubuntu 22.04 image (looked up automatically).
+
+Conditions:
+  CreateRole: !Equals [!Ref ExistingInstanceProfileName, ""]
+  HasEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
+Resources:
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /factoryguard
+      RetentionInDays: 7
+
+  GuardRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: factoryguard/guard
+      EmptyOnDelete: true
+  SimulatorRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: factoryguard/simulator
+      EmptyOnDelete: true
+  DemoAppRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: factoryguard/demo-app
+      EmptyOnDelete: true
+
+  ServerRole:
+    Type: AWS::IAM::Role
+    Condition: CreateRole
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: factoryguard-logs-and-metrics
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/factoryguard:*"
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: FactoryGuard
+
+  ServerProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: CreateRole
+    Properties:
+      Roles:
+        - !Ref ServerRole
+
+  ServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: FactoryGuard - SSH and dashboard from one address only
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedCidr
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: !Ref AllowedCidr
+
+  Server:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      IamInstanceProfile: !If [CreateRole, !Ref ServerProfile, !Ref ExistingInstanceProfileName]
+      SecurityGroupIds:
+        - !GetAtt ServerSecurityGroup.GroupId
+      # Containers on the server need to read the server's role credentials, so allow two network hops.
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+        HttpPutResponseHopLimit: 2
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: factoryguard
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -e
+          # extra memory for building Java images on small servers
+          if [ "$(free -m | awk '/^Mem:/{print $2}')" -lt 3000 ] && [ ! -f /swapfile ]; then
+            fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+            echo '/swapfile none swap sw 0 0' >> /etc/fstab
+          fi
+          apt-get update -y
+          apt-get install -y ca-certificates curl awscli unzip
+          curl -fsSL https://get.docker.com | sh
+          usermod -aG docker ubuntu
+          mkdir -p /home/ubuntu/factoryguard
+          chown ubuntu:ubuntu /home/ubuntu/factoryguard
+
+  ServerAddress:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref Server
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: FactoryGuard alerts
+
+  AlertSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasEmail
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  IncidentAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: factoryguard-incident-detected
+      AlarmDescription: FactoryGuard found a bad release and started a rollback.
+      Namespace: FactoryGuard
+      MetricName: IncidentsDetected
+      Dimensions:
+        - Name: Service
+          Value: demo-app
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertTopic
+
+  ThroughputAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: factoryguard-throughput-not-restored
+      AlarmDescription: >
+        Sensor throughput stayed below the threshold for 3 minutes in a row. The automatic rollback did not
+        fix it, so a human is needed.
+      Namespace: FactoryGuard
+      MetricName: EventsPerMinute
+      Dimensions:
+        - Name: Service
+          Value: demo-app
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      Threshold: !Ref ThroughputThreshold
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertTopic
+
+Outputs:
+  ServerAddress:
+    Description: Public address of the server (use as the EC2_HOST secret)
+    Value: !Ref ServerAddress
+  DashboardUrl:
+    Description: Open this after the first deployment
+    Value: !Sub "http://${ServerAddress}:3000"
+  SshCommand:
+    Description: Connect to the server
+    Value: !Sub "ssh -i <your-key>.pem ubuntu@${ServerAddress}"
+  RegistryPrefix:
+    Description: Where the container images are stored
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/factoryguard"

@@ -1,0 +1,43 @@
+# Used ONLY on the AWS server, together with docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.aws.yml up -d --no-build
+# - guard and simulator come from Amazon ECR instead of being built on the server
+# - container logs go to Amazon CloudWatch Logs (log group /factoryguard)
+# - guard publishes its metrics (throughput, health, incidents) to CloudWatch
+# Set these in the .env file on the server (the deploy workflow does it for you):
+#   REGISTRY_PREFIX=123456789012.dkr.ecr.eu-west-1.amazonaws.com/factoryguard
+#   TAG=abc1234
+#   GUARD_IMAGE_NAME=123456789012.dkr.ecr.eu-west-1.amazonaws.com/factoryguard/demo-app
+#   AWS_REGION=eu-west-1
+services:
+  guard:
+    image: ${REGISTRY_PREFIX}/guard:${TAG}
+    environment:
+      GUARD_CLOUDWATCH_ENABLED: "true"
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-group: /factoryguard
+        awslogs-stream-prefix: guard
+  simulator:
+    image: ${REGISTRY_PREFIX}/simulator:${TAG}
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-group: /factoryguard
+        awslogs-stream-prefix: simulator
+  mosquitto:
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-group: /factoryguard
+        awslogs-stream-prefix: mosquitto
+  postgres:
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-group: /factoryguard
+        awslogs-stream-prefix: postgres

@@ -1,0 +1,8 @@
+target/
+*.log
+.idea/
+.vscode/
+
+# Environment variables — copy to .env and fill in your own values
+.env
+

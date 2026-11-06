@@ -1,0 +1,100 @@
+# FactoryGuard - everything runs from this one file.
+# You do not need to edit it. Start with ./run.sh (Mac/Linux) or run.bat (Windows).
+name: factoryguard
+
+services:
+  # The MQTT "post office" that carries sensor messages
+  mosquitto:
+    image: eclipse-mosquitto:2
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    ports:
+      - "127.0.0.1:1883:1883"
+    networks: [factoryguard_net]
+    restart: unless-stopped
+
+  # Stores deployment and incident history
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-factoryguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-factoryguard_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-factoryguard}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-factoryguard} -d ${POSTGRES_DB:-factoryguard}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks: [factoryguard_net]
+    restart: unless-stopped
+
+  # Fake factory machines sending sensor readings
+  simulator:
+    build: ./simulator
+    environment:
+      MQTT_HOST: mosquitto
+      MESSAGES_PER_MINUTE: ${MESSAGES_PER_MINUTE:-100}
+    depends_on: [mosquitto]
+    networks: [factoryguard_net]
+    restart: unless-stopped
+
+  # FactoryGuard itself: monitors, decides, rolls back, shows the dashboard
+  guard:
+    build: ./guard
+    ports:
+      # Listens on this computer only by default. See docs/SECURITY.md before changing GUARD_BIND.
+      - "${GUARD_BIND:-127.0.0.1}:3000:8080"
+    environment:
+      DB_HOST: postgres
+      DB_NAME: ${POSTGRES_DB:-factoryguard}
+      DB_USER: ${POSTGRES_USER:-factoryguard}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-factoryguard_dev}
+      GUARD_IMAGE_NAME: ${GUARD_IMAGE_NAME:-factoryguard/demo-app}
+      GUARD_CLOUDWATCH_ENABLED: ${GUARD_CLOUDWATCH_ENABLED:-false}
+      GUARD_COOKIE_SECURE: ${GUARD_COOKIE_SECURE:-false}
+      AWS_REGION: ${AWS_REGION:-}
+      GUARD_THRESHOLD: ${GUARD_THRESHOLD:-60}
+      GUARD_CHECK_INTERVAL_SECONDS: ${GUARD_CHECK_INTERVAL_SECONDS:-5}
+      GUARD_WARMUP_SECONDS: ${GUARD_WARMUP_SECONDS:-25}
+      GUARD_FAILURES_BEFORE_ROLLBACK: ${GUARD_FAILURES_BEFORE_ROLLBACK:-3}
+      GUARD_MAX_ROLLBACKS_PER_10_MIN: ${GUARD_MAX_ROLLBACKS_PER_10_MIN:-2}
+      GUARD_WEBHOOK_URL: ${GUARD_WEBHOOK_URL:-}
+    volumes:
+      # Lets FactoryGuard start and stop the demo app container (this is how rollback works)
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    networks: [factoryguard_net]
+    restart: unless-stopped
+
+  # The two "releases" of the demo app. They are only BUILT here;
+  # FactoryGuard starts them. v1.1 contains a deliberate bug.
+  demo-app-v1-0:
+    profiles: ["images"]
+    build:
+      context: ./demo-app
+      args:
+        APP_VERSION: v1.0
+        BUG_MODE: "false"
+    image: factoryguard/demo-app:v1.0
+
+  demo-app-v1-1:
+    profiles: ["images"]
+    build:
+      context: ./demo-app
+      args:
+        APP_VERSION: v1.1
+        BUG_MODE: "true"
+    image: factoryguard/demo-app:v1.1
+
+networks:
+  factoryguard_net:
+    name: factoryguard_net
+
+volumes:
+  pgdata:
