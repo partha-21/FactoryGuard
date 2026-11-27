@@ -167,3 +167,52 @@ To finish the project in order, follow [docs/FINAL_CHECKLIST.md](docs/FINAL_CHEC
 - FactoryGuard's recovery state (running version, last known-good version, rollback counter) is stored in the database
   and survives a restart.
 - Forgotten passwords cannot be reset. Create a new account or run `./stop.sh reset` to wipe all data.
+
+flowchart TB
+    %% Styles
+    classDef frontend fill:#0f172a,stroke:#3b82f6,stroke-width:2px,color:#e2e8f0
+    classDef backend  fill:#052e16,stroke:#22c55e,stroke-width:2px,color:#e2e8f0
+    classDef data     fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#e2e8f0
+    classDef mqtt     fill:#1c1917,stroke:#f59e0b,stroke-width:2px,color:#e2e8f0
+    classDef app      fill:#171717,stroke:#64748b,stroke-width:2px,color:#e2e8f0
+
+## FlowChart
+<img width="901" height="708" alt="image" src="https://github.com/user-attachments/assets/b551d9cb-0005-407a-a14d-fae000dfeeba" />
+
+## Architecture:
+┌─────────────────────────────────────────────────────┐
+│           Factory Guard Frontend                    │
+│           React / Web Dashboard                     │
+│           (served by Guard on :3000)                │
+└──────────────────────┬──────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│                 Guard Backend                       │
+│     Spring Boot (Java 21)                           │
+│     • Authentication & sessions                     │
+│     • Health + throughput monitoring (every 5s)     │
+│     • Incident recording + alerts                   │
+│     • Automatic rollback via Docker socket          │
+└──────────┬──────────────────────────┬───────────────┘
+           │                          │
+           ▼                          ▼
+┌─────────────────────┐     ┌─────────────────────────┐
+│     Database        │     │      Messaging          │
+│     PostgreSQL      │     │   Mosquitto (MQTT)      │
+│  accounts, history, │     │                         │
+│  incidents, state   │     │                         │
+└─────────────────────┘     └────────────┬────────────┘
+                                         │
+                    ┌────────────────────┼────────────────────┐
+                    │                    │                    │
+                    ▼                    ▼                    ▼
+           ┌──────────────┐     ┌────────────────┐   ┌─────────────────┐
+           │  Simulator   │     │   Demo App     │   │   Demo App      │
+           │  (Java)      │────►│   v1.0         │   │   v1.1 (buggy)  │
+           │  ~100 msg/min│ MQTT│  (healthy)     │   │  (low throughput)│
+           └──────────────┘     └────────────────┘   └─────────────────┘
+
+    
+
+    
