@@ -64,18 +64,6 @@ new account also starts at zero.
 
 ---
 
-## What is what, in plain English
-
-| Word | What it means here |
-|------|--------------------|
-| **Docker / container** | A way to package a program with everything it needs, so it runs the same on any computer. Each part of this project runs in its own container. |
-| **Docker Compose** | A file (`docker-compose.yml`) that starts all the containers together. |
-| **MQTT** | A very lightweight messaging system used by machines and sensors. A "broker" (Mosquitto) is like a post office: senders drop messages on a *topic*, receivers pick them up. |
-| **Cloud** | Someone else's computers that you rent. For this project it is just a normal computer (a "virtual machine") running Docker. Running on your laptop works exactly the same. |
-| **Release / version** | A numbered build of the app. Here: v1.0 (good) and v1.1 (deliberately broken). |
-| **Rollback** | Going back to the previous working version. |
-| **Throughput** | How many sensor messages the app handles per minute. |
-
 ## The parts
 
 | Container | Job |
@@ -128,53 +116,6 @@ It also writes `docs/EVIDENCE.md` with the numbers it measured (throughput, time
 final verification). Only a file produced by a real run counts as evidence.
 
 The same check runs on GitHub for every push (`.github/workflows/ci.yml`), together with the unit tests.
-
-## Running it on AWS
-
-Two paths, both described step by step in [docs/AWS_DEPLOY.md](docs/AWS_DEPLOY.md):
-
-- **Path A (simple, works on student and lab accounts):** launch one Ubuntu server, upload this folder, run
-  `bash deploy/setup-vm.sh`. No IAM users or roles needed.
-- **Path B (automated):** a CloudFormation template (`deploy/aws/factoryguard-stack.yaml`) creates the server,
-  ECR image repositories, CloudWatch logs, metrics and alarms with email alerts; a GitHub Actions workflow
-  (`.github/workflows/deploy-aws.yml`) builds, pushes and deploys.
-
-The AWS package has **not been tested** because it needs a real account. It uses your credits while it
-runs: set a billing alert, stop the server when idle, and delete everything when finished.
-
-## Running it on any other Linux server
-
-Any Linux server with a public address works (another cloud, a college lab machine, a cheap VPS):
-
-1. Copy this folder to the server and unzip it.
-2. Run `bash deploy/setup-vm.sh`. It installs Docker if needed, builds everything and starts it. Use a
-   server with at least 2 GB of memory.
-3. In the server's firewall allow inbound TCP **3000** from your own IP only. Never open port 1883.
-4. Open `http://<server-address>:3000`.
-
-For the presentation script and likely judge questions, see [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
-To finish the project in order, follow [docs/FINAL_CHECKLIST.md](docs/FINAL_CHECKLIST.md). Read [docs/SECURITY.md](docs/SECURITY.md) before exposing it to anyone else.
-
-## Scope and limits
-
-- Uses simulated sensor data and a demonstration app only.
-- It does not replace industrial safety systems, PLCs or certified factory control infrastructure.
-- It is a **prototype for local demonstration**. The dashboard listens on this computer only by default.
-  The `guard` container controls Docker through the Docker socket, which is powerful: keep it on a laptop or
-  isolated test machine and never expose it to the internet. Details and what must change first: [docs/SECURITY.md](docs/SECURITY.md).
-- Accounts are real (BCrypt-hashed passwords, 7-day session cookie, lock-out after 5 failed sign-ins), but the app runs on
-  plain HTTP and **one** demo environment is shared by all accounts. Use HTTPS before any shared use.
-- FactoryGuard's recovery state (running version, last known-good version, rollback counter) is stored in the database
-  and survives a restart.
-- Forgotten passwords cannot be reset. Create a new account or run `./stop.sh reset` to wipe all data.
-
-flowchart TB
-    %% Styles
-    classDef frontend fill:#0f172a,stroke:#3b82f6,stroke-width:2px,color:#e2e8f0
-    classDef backend  fill:#052e16,stroke:#22c55e,stroke-width:2px,color:#e2e8f0
-    classDef data     fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#e2e8f0
-    classDef mqtt     fill:#1c1917,stroke:#f59e0b,stroke-width:2px,color:#e2e8f0
-    classDef app      fill:#171717,stroke:#64748b,stroke-width:2px,color:#e2e8f0
 
 ## FlowChart
 <img width="901" height="708" alt="image" src="https://github.com/user-attachments/assets/b551d9cb-0005-407a-a14d-fae000dfeeba" />
